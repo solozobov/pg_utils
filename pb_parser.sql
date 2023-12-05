@@ -1,5 +1,5 @@
 -- https://protobuf.dev/programming-guides/encoding/
--- NOTICE:
+-- NOTICE FOR DEVELOPRS:
 --   function substring(bytea, left, length);
 --     left index counts from 1 in bytes
 --   function get_byte(bytea, index);
@@ -7,7 +7,7 @@
 
 
 -- from_index and next_index counts from 1 byte
-create or replace function pb_parse_varint(in pb bytea, in from_index int, out next_index int, out result bigint) language plpgsql as $$
+create or replace function pg_temp.pb_parse_varint(in pb bytea, in from_index int, out next_index int, out result bigint) language plpgsql as $$
     declare
         b int;
         len int = octet_length(pb);
@@ -34,7 +34,7 @@ $$;
 
 -- select pb_parse_varint('\x0a2462383861663337662d626530642d343037382d386237322d333037653834363736343939', 1);
 
-create or replace function pb_varint(payload bytea) returns bigint language plpgsql as $$
+create or replace function pg_temp.pb_varint(payload bytea) returns bigint language plpgsql as $$
     declare
         res bigint;
     begin
@@ -45,7 +45,7 @@ $$;
 
 -- select pb_varint('\x12');
 
-create or replace function pb_str(payload bytea) returns text language plpgsql as $$
+create or replace function pg_temp.pb_str(payload bytea) returns text language plpgsql as $$
     begin
         return convert_from(payload, 'UTF-8');
     end;
@@ -53,7 +53,7 @@ $$;
 
 -- select pb_str('\x74657374696e67');
 
-create or replace function pb_num(payload bytea) returns bigint language plpgsql as $$
+create or replace function pg_temp.pb_num(payload bytea) returns bigint language plpgsql as $$
     declare
         i int = octet_length(payload) - 1;
         result bigint = 0;
@@ -74,7 +74,7 @@ $$;
 -- create or replace function pb_double(payload bytea) returns double language plpgsql as $$
 -- solution in https://stackoverflow.com/questions/9374561/how-to-cast-type-bytea-to-double-precision/11661849#11661849
 
-create or replace function pb(payload bytea) returns table (field_id bigint, type text, value text) language plpgsql as $$
+create or replace function pg_temp.pb(payload bytea) returns table (field_id bigint, type text, value text) language plpgsql as $$
     declare
         l int = 1;
         r int = octet_length(payload) + 1;
@@ -135,7 +135,7 @@ $$;
 -- select * from pb('\x0a2462383861663337662d626530642d343037382d386237322d333037653834363736343939');
 -- select * from pb('\x080212340a160a013012111a0f0a0d080110a70118caa4b1012083020a1a0a0131121512130a111a0f0a0d080110a60118d79c9001208202');
 
-create or replace function pb(payload bytea, variadic keys int[]) returns table (field_id bigint, type text, value text) language plpgsql as $$
+create or replace function pg_temp.pb(payload bytea, variadic keys int[]) returns table (field_id bigint, type text, value text) language plpgsql as $$
     declare
         type_id int;
         l int = 1;
