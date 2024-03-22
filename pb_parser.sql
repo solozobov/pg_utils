@@ -6,6 +6,8 @@
 --     index counts from 0 byte
 
 
+\set QUIET on
+
 -- from_index and next_index counts from 1 byte
 create or replace function pg_temp.pb_parse_varint(in pb bytea, in from_index int, out next_index int, out result bigint) language plpgsql as $$
     declare
@@ -223,3 +225,7 @@ create or replace function pg_temp.pb(payload bytea, variadic keys int[]) return
 $$;
 
 -- select * from pb('\x080212340a160a013012111a0f0a0d080110a70118caa4b1012083020a1a0a0131121512130a111a0f0a0d080110a60118d79c9001208202', 2);
+
+\set QUIET off
+
+\echo 'Function pb(protobuf_message::bytea [, proto_fields_indexes::int]) added'
