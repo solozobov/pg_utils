@@ -176,9 +176,10 @@ SELECT $$
     WHERE tc.constraint_type = 'FOREIGN KEY' AND kcu.table_schema NOT IN ('pg_catalog', 'pg_toast')
     GROUP BY tc.constraint_catalog, tc.constraint_schema, tc.constraint_name, kcu.table_schema, kcu.table_name, ccu.table_schema, ccu.table_name
   )
-  SELECT 'possible full scans of table ''' || fk.from_table || '''' AS "problem",
-         'database will do full scans of table ''' || fk.from_table || ''' to be able to delete rows from referenced table ''' || fk.to_table || '''' AS "problem description",
-         'table ''' || fk.from_table || ''' dont have index on columns ''' || ARRAY_TO_STRING(fk.from_columns, ',') || ''' declared as foreign key ''' || fk.foreign_key || '''' AS cause
+  SELECT 'WARNING' AS severity,
+         'Possible full scans of table ''' || fk.from_table || ''' in case of row deletions from table ''' || fk.to_table || '''.' AS problem,
+         'Database will do full scans of table ''' || fk.from_table || ''' to delete rows from table ''' || fk.to_table || ''' because of foreign key constraint ''' || fk.foreign_key || '''.' AS description,
+         'Add index on table ''' || fk.from_table || ''' columns ''' || ARRAY_TO_STRING(fk.from_columns, ',') || ''' that are declared as foreign key.' AS "possible solution"
   FROM foreign_keys fk LEFT JOIN indexes i ON fk.from_table = i.table_ AND (i.fields)[1:array_length(fk.from_columns, 1)] @> fk.from_columns
   WHERE i.index_ IS NULL;
 $$ AS problems \gset
