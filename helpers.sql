@@ -143,6 +143,46 @@ SELECT $$
   LIMIT 30;
 $$ AS gc \gset
 
+-- :problem_foreign_keys_without_index
+SELECT $$
+  WITH indexes as (
+    SELECT
+      ct.relnamespace::regnamespace || '.' || ct.relname AS table_,
+      ci.relnamespace::regnamespace || '.' || ci.relname AS index_,
+      array_agg(a.attname::text ORDER BY array_position(i.indkey, a.attnum) ASC) AS fields
+    FROM pg_catalog.pg_index i
+      INNER JOIN pg_catalog.pg_class ct ON ct.oid = i.indrelid
+      INNER JOIN pg_catalog.pg_class ci ON ci.oid = i.indexrelid
+      INNER JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    WHERE ct.relnamespace::regnamespace NOT IN ('pg_catalog', 'pg_toast')
+    GROUP BY ct.relnamespace, ct.relname, ci.relnamespace, ci.relname
+  ),
+  foreign_keys as (
+    SELECT
+      tc.constraint_schema || '.' || tc.constraint_name AS foreign_key,
+      kcu.table_schema || '.' || kcu.table_name AS from_table,
+      ARRAY_AGG(DISTINCT kcu.column_name::text) AS from_columns,
+      ccu.table_schema || '.' || ccu.table_name AS to_table,
+      ARRAY_AGG(DISTINCT ccu.column_name::text) AS to_columns
+    FROM information_schema.table_constraints tc
+    INNER JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_catalog = kcu.constraint_catalog
+      AND tc.constraint_schema = kcu.constraint_schema
+      AND tc.constraint_name = kcu.constraint_name
+    INNER JOIN information_schema.constraint_column_usage ccu
+      ON tc.constraint_catalog = ccu.constraint_catalog
+      AND tc.constraint_schema = ccu.constraint_schema
+      AND tc.constraint_name = ccu.constraint_name
+    WHERE tc.constraint_type = 'FOREIGN KEY' AND kcu.table_schema NOT IN ('pg_catalog', 'pg_toast')
+    GROUP BY tc.constraint_catalog, tc.constraint_schema, tc.constraint_name, kcu.table_schema, kcu.table_name, ccu.table_schema, ccu.table_name
+  )
+  SELECT 'possible full scans of table ''' || fk.from_table || '''' AS "problem",
+         'database will do full scans of table ''' || fk.from_table || ''' to be able to delete rows from referenced table ''' || fk.to_table || '''' AS "problem description",
+         'table ''' || fk.from_table || ''' dont have index on columns ''' || ARRAY_TO_STRING(fk.from_columns, ',') || ''' declared as foreign key ''' || fk.foreign_key || '''' AS cause
+  FROM foreign_keys fk LEFT JOIN indexes i ON fk.from_table = i.table_ AND (i.fields)[1:array_length(fk.from_columns, 1)] @> fk.from_columns
+  WHERE i.index_ IS NULL;
+$$ AS problems \gset
+
 \set QUIET off
 
-\echo 'Functions :table_stats :table_permissions :index_stats :hard_queries :gc added'
+\echo 'Functions :table_stats :table_permissions :index_stats :hard_queries :gc :problem_foreign_keys_without_index added'
