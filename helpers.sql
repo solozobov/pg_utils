@@ -15,7 +15,7 @@ SELECT $$
          n_tup_del AS deletes
   FROM pg_stat_all_tables t
   INNER JOIN pg_class c ON t.relid = c.oid
-  INNER JOIN pg_temp.get_heap_bloat_info() b ON t.schemaname = b.schemaname AND t.relname = b.tblname
+  INNER JOIN get_heap_bloat_info_bece342fadda() b ON t.schemaname = b.schemaname AND t.relname = b.tblname
   INNER JOIN pg_statio_all_tables io ON t.relid = io.relid
   WHERE t.schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   ORDER BY pg_total_relation_size(t.relid) DESC;

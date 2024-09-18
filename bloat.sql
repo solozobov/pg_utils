@@ -26,7 +26,7 @@
 
 \set QUIET on
 
-CREATE OR REPLACE FUNCTION pg_temp.get_heap_bloat_info() RETURNS TABLE (
+CREATE OR REPLACE FUNCTION get_heap_bloat_info_bece342fadda() RETURNS TABLE (
     current_database name,
     schemaname       name,
     tblname          name,
