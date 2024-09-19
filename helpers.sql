@@ -1,5 +1,8 @@
 \set QUIET on
 
+-- TODO:
+--   look at n_live_tup, n_dead_tup, n_tup_hot_upd at https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW
+--   make :index_gc and :index_permissions
 -- :table_stats
 SELECT $$
   SELECT t.schemaname || '.' || t.relname AS table,
@@ -88,10 +91,10 @@ SELECT $$
     -- r.indrelid::regclass AS table,
     pg_size_pretty(index_size) AS size,
     CASE WHEN table_size = 0 THEN NULL ELSE ((index_size * 100) / table_size)::numeric || '%' END AS "%_of_table_size",
-    CASE WHEN table_rows = 0 THEN NULL ELSE round(((index_rows * 100) / table_rows))::numeric || '%' END AS "%_row_coverage",
+    CASE WHEN table_rows = 0 THEN NULL ELSE round(((index_rows * 100) / table_rows))::numeric || '%' END AS "row_coverage",
     CASE WHEN indisunique THEN 'Y' ELSE '' END AS unique,
     idx_scan AS index_scans,
-    CASE WHEN idx_tup_read + idx_tup_fetch = 0 THEN '0%' ELSE (idx_tup_fetch * 100 / (idx_tup_read + idx_tup_fetch))::numeric || '%' END AS tuples_red_from_table,
+    CASE WHEN idx_tup_read = 0 THEN '0%' ELSE ((idx_tup_read - idx_tup_fetch) * 100 / idx_tup_read)::numeric || '%' END AS index_only_returned_tuples,
     CASE WHEN idx_blks_hit + idx_blks_read = 0 THEN '0%' ELSE (idx_blks_read * 100 / (idx_blks_hit + idx_blks_read))::numeric || '%' END AS pages_red_from_disc
   FROM r
   ORDER BY index_size DESC;
@@ -143,7 +146,7 @@ SELECT $$
   LIMIT 30;
 $$ AS gc \gset
 
--- :problem_foreign_keys_without_index
+-- :problems
 SELECT $$
   WITH indexes as (
     SELECT
@@ -186,4 +189,4 @@ $$ AS problems \gset
 
 \set QUIET off
 
-\echo 'Functions :table_stats :table_permissions :index_stats :hard_queries :gc :problem_foreign_keys_without_index added'
+\echo 'Functions :table_stats :table_permissions :index_stats :hard_queries :gc :problems added'
