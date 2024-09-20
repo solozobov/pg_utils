@@ -3,6 +3,7 @@
 -- TODO:
 --   look at n_live_tup, n_dead_tup, n_tup_hot_upd at https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW
 --   make :index_gc and :index_permissions
+--   look at https://github.com/powa-team/pg_stat_kcache/ and https://github.com/percona/pg_stat_monitor features
 -- :table_stats
 SELECT $$
   SELECT t.schemaname || '.' || t.relname AS table,
@@ -107,19 +108,19 @@ SELECT $$
     substring(query, 0, 200),
     round(total_exec_time::numeric, 2) AS execution_time,
     calls,
-    pg_size_pretty((shared_blks_hit + shared_blks_read) * 8192 - reads) AS memory_hit,
-    pg_size_pretty(reads) AS disk_read,
-    pg_size_pretty(writes) AS disk_write,
+    pg_size_pretty((shared_blks_hit + shared_blks_read) * 8192 - exec_reads) AS memory_hit,
+    pg_size_pretty(exec_reads) AS disk_read,
+    pg_size_pretty(exec_writes) AS disk_write,
     round(blk_read_time::numeric, 2) AS blk_read_time,
     round(blk_write_time::numeric, 2) AS blk_write_time,
-    round(user_time::numeric, 2) AS user_time,
-    round(system_time::numeric, 2) AS system_time
+    round(exec_user_time::numeric, 2) AS user_time,
+    round(exec_system_time::numeric, 2) AS system_time
   FROM pg_stat_statements s
   JOIN pg_stat_kcache() k USING (userid, dbid, queryid)
   JOIN pg_database d ON s.dbid = d.oid
   JOIN pg_roles r ON r.oid = userid
   WHERE datname != 'postgres' AND datname NOT LIKE 'template%'
-  ORDER BY user_time DESC
+  ORDER BY exec_user_time + exec_system_time DESC
   LIMIT 50;
 $$ AS hard_queries \gset
 

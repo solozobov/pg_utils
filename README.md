@@ -1,5 +1,5 @@
 # psql_utils
-Set of `psql` utility functions that helps me analyze PostgreSQL database state.
+Set of [`psql`](https://www.postgresql.org/docs/current/app-psql.html) utility functions that helps me analyze PostgreSQL database state.
 
 ## Installation
 If you want to add these utils to your psql:
@@ -23,7 +23,7 @@ You can disable import of pb() function (parsing Protobuf objects) by commenting
 ## Available Functions
 
 ### :table_stats
-Gives information about all available tables in form of:
+Gives information about all available tables. Output example:
 ```
 2024 sep 18 19:31:23 spb-128_f9ecafbe solozobov@eukaryota=> :table_stats
        table       | total_size | table_size | indexes_size | mvcc_garbage_rows | seq_scans | pages_red_from_disc |   rows    |  inserts  | updates | deletes
@@ -44,7 +44,7 @@ Gives information about all available tables in form of:
 `inserts`, `updates`, `deletes` - number of inserted, updated and deleted rows in table since last statistics reset. [See `n_tup_ins`, `n_tup_upd` and `n_tup_del`](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW). 
 
 ### :index_stats
-Gives information about all available indexes:
+Gives information about all available indexes. Output example:
 ```
 2024 sep 18 19:39:17 spb-128_f9ecafbe solozobov@eukaryota=> :index_stats
                 index               |  size   | %_of_table_size | row_coverage | unique | index_scans | index_only_returned_tuples | pages_red_from_disc
@@ -56,12 +56,12 @@ Gives information about all available indexes:
  plants.roses_pkey DUPn1            | 17 GB   | 35%             | 100%         | Y      |           0 | 0%                         | 16%
  plants.roses_with_spikes DUPn1     | 20 GB   | 40%             | 50%          |        |           0 | 0%                         | 96%
 ```
-Index names in `index` column sometimes are given suffixes:
- - `INVALID` - means that index was not correctly built (e.g. when `CREATE INDEX CONCURRENTLY` fails) and can't be used. 
- - `DISABLED` - means that index usage was manually disabled with `update pg_index set indisvalid = false where ...`. [Index state may by inconsistent with table](https://www.postgresql.org/docs/current/catalog-pg-index.html).
- - `DUPnX` - means that multiple indexes marked with same `DUPnX` suffix are **potential** duplicates of each other. This mark is given to indexes with same columns in same order.
+Index names in `index` column sometimes have suffixes:
+ - `INVALID` - index was not correctly built (e.g. when `CREATE INDEX CONCURRENTLY` fails) and can't be used. 
+ - `DISABLED` - index usage was manually disabled with `update pg_index set indisvalid = false where ...`. This means [index state may by inconsistent with table](https://www.postgresql.org/docs/current/catalog-pg-index.html).
+ - `DUPnX` - multiple indexes marked with same `DUPnX` suffix are **potential** duplicates of each other. This mark is given to indexes with same columns in same order, but some of them may be partial, some of them may have more columns than others.
 
-`row_coverage` - estimated percent of table rows covered by index. Helps monitor creation of new indexes and see partial indexes coverage. Updated only during VACUUM, ANALYZE, CREATE INDEX and a few other DDL commands. [See `reltuples`](https://www.postgresql.org/docs/current/catalog-pg-class.html#CATALOG-PG-CLASS).
+`row_coverage` - estimated percent of table rows covered by index. Helps monitor creation of new indexes and see partial indexes coverage. Updated only during `VACUUM`, `ANALYZE`, `CREATE INDEX` and a few other DDL commands. [See `reltuples`](https://www.postgresql.org/docs/current/catalog-pg-class.html#CATALOG-PG-CLASS).
 
 `index_scans` - number of queries performed with this index. [See `idx_scan`](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-INDEXES-VIEW).
 
@@ -70,7 +70,7 @@ Index names in `index` column sometimes are given suffixes:
 `pages_red_from_disc` - percent of blocks (file system pages) red from disk. Rest of blocks supposed to be red from special in-memory buffer. [See `idx_blks_read` and `idx_blks_hit`](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STATIO-ALL-INDEXES-VIEW).
 
 ### :table_permissions
-Gives information about table permissions:
+Gives information about table permissions. Output example:
 ```
 2024 sep 18 19:39:46 spb-128_f9ecafbe solozobov@eukaryota=> :table_permissions
                  table                 |   role (♛ = with grant)      |         permissions
@@ -82,12 +82,27 @@ Gives information about table permissions:
 ```
 
 ### :hard_queries
+Shows the most complex and frequently called queries. Reuires `pg_stat_kcache` extension to be installed. Output example:
+```
+-[ RECORD 1 ]--+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+rolname        | Alena
+substring      | SELECT parent, dir, size, key, owner, modtime FROM fs_uploads WHERE path= $1
+execution_time | 48465011.63
+calls          | 918996370
+memory_hit     | 40 TB
+disk_read      | 1347 MB
+disk_write     | 16 kB
+blk_read_time  | 109337.54
+blk_write_time | 0.04
+user_time      | 63981.77
+system_time    | 13591.17
+```
 
 ### :tx
 Shows information about running transactions.
 
 ### :gc
-Gives information about tables garbage collection state:
+Gives information about tables garbage collection state. Output example:
 ```
 2024 sep 18 19:45:46 spb-128_f9ecafbe solozobov@eukaryota=> :gc
        table       |  size   |  tuples   | garbage_% |        last_autovacuum        |       last_autoanalyze
@@ -99,7 +114,7 @@ Gives information about tables garbage collection state:
 
 
 ### :problems
-Gives information about different problems detected in database in for of:
+States potential database problems. Output example:
 
 ## How it works
 Functions combine information from:
