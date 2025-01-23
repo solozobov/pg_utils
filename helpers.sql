@@ -25,30 +25,37 @@ SELECT $$
   ORDER BY pg_total_relation_size(t.relid) DESC;
 $$ AS table_stats \gset
 
--- :table_permissions
+-- :table_privileges
 SELECT $$
   SELECT
     schemaname || '.' || tablename AS "table",
-    array_to_string(array_agg(role_name || CASE WHEN grantable THEN ' ♛' ELSE '' END ORDER BY role_name), ', ') AS "role (♛ = with grant)",
-    array_to_string(permissions, ',') AS permissions
+    array_to_string(array_agg(role_name || CASE WHEN as_owner THEN ' ♛' WHEN grantable THEN ' ★' ELSE '' END ORDER BY as_owner DESC, role_name ASC), ', ') AS "role (♛ = owner, ★ = with grant)",
+    array_to_string(privilege, ',') AS "privileges"
   FROM (
     SELECT
-      CASE WHEN g.table_schema IS NULL THEN t.schemaname ELSE g.table_schema         END AS schemaname,
-      CASE WHEN g.table_name   IS NULL THEN t.tablename  ELSE g.table_name           END AS tablename,
-      CASE WHEN g.grantee      IS NULL THEN t.tableowner ELSE g.grantee              END AS role_name,
-      CASE WHEN g.is_grantable IS NULL THEN true         ELSE g.is_grantable = 'YES' END AS grantable,
-      CASE WHEN bool_or(g.privilege_type IS NULL) OR array_agg(g.privilege_type) @> '{"INSERT","SELECT","UPDATE","DELETE","TRUNCATE","REFERENCES","TRIGGER"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT g.privilege_type ORDER BY g.privilege_type) END AS permissions
-    FROM information_schema.role_table_grants AS g FULL JOIN pg_tables AS t ON g.table_schema = t.schemaname AND g.table_name = t.tablename AND g.grantee = t.tableowner
-    WHERE (g.table_schema IS NULL OR g.table_schema NOT IN ('pg_catalog','information_schema','tmp')) AND (t.schemaname IS NULL OR t.schemaname NOT IN ('pg_catalog','information_schema','tmp'))
-    GROUP BY
-      CASE WHEN g.table_schema IS NULL THEN t.schemaname ELSE g.table_schema         END,
-      CASE WHEN g.table_name   IS NULL THEN t.tablename  ELSE g.table_name           END,
-      CASE WHEN g.grantee      IS NULL THEN t.tableowner ELSE g.grantee              END,
-      CASE WHEN g.is_grantable IS NULL THEN true         ELSE g.is_grantable = 'YES' END
+      t.schemaname,
+      t.tablename,
+      g.grantee AS role_name,
+      false AS as_owner,
+      g.is_grantable = 'YES' AS grantable,
+      CASE WHEN array_agg(g.privilege_type) @> '{"INSERT","SELECT","UPDATE","DELETE","TRUNCATE","REFERENCES","TRIGGER"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT g.privilege_type ORDER BY g.privilege_type) END AS privilege
+    FROM pg_tables AS t INNER JOIN information_schema.role_table_grants AS g ON g.table_schema = t.schemaname AND g.table_name = t.tablename
+    WHERE t.schemaname NOT IN ('pg_catalog','information_schema','tmp')
+    GROUP BY t.schemaname, t.tablename, t.tableowner, g.grantee, g.is_grantable = 'YES'
+    UNION
+    SELECT
+      schemaname,
+      tablename,
+      tableowner AS role_name,
+      true AS as_owner,
+      true AS grantable,
+      '{"ALL"}' AS privilege
+    FROM pg_tables
+    WHERE schemaname NOT IN ('pg_catalog','information_schema','tmp')
   ) AS s
-  GROUP BY schemaname, tablename, permissions
-  ORDER BY schemaname, tablename, permissions;
-$$ AS table_permissions \gset
+  GROUP BY schemaname, tablename, "privileges"
+  ORDER BY schemaname, tablename, "privileges";
+$$ AS table_privileges \gset
 
 -- :index_stats
 SELECT $$
@@ -128,7 +135,7 @@ $$ AS hard_queries \gset
 SELECT $$
   SELECT now() - xact_start AS duration, *
   FROM pg_stat_activity
-  WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid() AND query not like 'autovacuum:%'
+  WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid()
   ORDER BY now() - xact_start DESC;
 $$ AS tx \gset
 
@@ -188,6 +195,119 @@ SELECT $$
   WHERE i.index_ IS NULL;
 $$ AS problems \gset
 
+-- :locks
+SELECT $$
+  SELECT
+    l.pid,
+    l.virtualtransaction AS tx,
+    l.mode AS "lock mode", -- https://www.postgresql.org/docs/17/explicit-locking.html#LOCKING-TABLES
+    CASE WHEN c.relkind IS NOT NULL THEN
+      CASE
+        WHEN c.relkind = 'r' THEN 'table'
+        WHEN c.relkind = 'i' THEN 'index'
+        WHEN c.relkind = 'S' THEN 'sequence'
+        WHEN c.relkind = 't' THEN 'TOAST table'
+        WHEN c.relkind = 'v' THEN 'view'
+        WHEN c.relkind = 'm' THEN 'materialized view'
+        WHEN c.relkind = 'c' THEN 'composite'
+        WHEN c.relkind = 'f' THEN 'foreign table'
+        WHEN c.relkind = 'p' THEN 'partitioned table'
+        WHEN c.relkind = 'I' THEN 'partitioned index'
+        ELSE '???'
+      END || ' ' || c.relnamespace::regnamespace || '.' || c.relname || ' '
+      ELSE ''
+    END ||
+    CASE -- https://www.postgresql.org/docs/17/monitoring-stats.html#WAIT-EVENT-LOCK-TABLE
+      WHEN l.locktype IN ('relation', 'page', 'tuple') THEN ''
+      WHEN l.locktype = 'advisory' THEN 'advisory '
+      WHEN l.locktype = 'transactionid' THEN 'transaction to finish '
+      WHEN l.locktype = 'applytransaction' THEN 'remote transaction being applied by a logical replication subscriber '
+      WHEN l.locktype = 'spectoken' THEN 'speculative insertion lock '
+      WHEN l.locktype = 'frozenid' THEN 'update pg_database.datfrozenxid and pg_database.datminmxid lock '
+      WHEN l.locktype = 'extend' THEN 'extend a relation lock '
+      WHEN l.locktype = 'object' THEN 'non-relation database object lock '
+      WHEN l.locktype = 'virtualxid' THEN 'virtual transaction ID lock '
+      WHEN l.locktype = 'userlock' THEN 'user lock '
+      ELSE '??? '
+    END ||
+    CASE WHEN l.virtualxid IS NOT NULL THEN 'virtual transaction' ELSE '' END ||
+    CASE WHEN l.transactionid IS NOT NULL THEN 'transaction' ELSE '' END
+    AS "lock object",
+    CASE WHEN l.locktype = 'advisory' THEN
+      CASE
+        WHEN l.objsubid = 1 THEN (l.classid::bigint << 32) | l.objid::bigint || ''
+        WHEN l.objsubid = 2 THEN '(' || l.classid || ', ' || l.objid || ')'
+        ELSE '???'
+      END
+    ELSE
+      CASE WHEN l.classid IS NOT NULL THEN 'pg_class.oid#' || l.classid || ' ' ELSE '' END ||
+      CASE WHEN l.virtualxid IS NOT NULL THEN l.virtualxid || ' ' ELSE '' END ||
+      CASE WHEN l.transactionid IS NOT NULL THEN l.transactionid || ' ' ELSE '' END ||
+      CASE WHEN l.page IS NOT NULL THEN 'page #' || l.page || ' ' ELSE '' END ||
+      CASE WHEN l.tuple IS NOT NULL THEN 'tuple ' || l.tuple || ' ' ELSE '' END ||
+      CASE WHEN l.objid IS NOT NULL THEN 'object #' || l.objid || ' ' ELSE '' END ||
+      CASE WHEN l.objsubid IS NOT NULL THEN 'column #' || l.objsubid || ' ' ELSE '' END
+    END
+    AS "lock details",
+    CASE WHEN l.granted THEN 'acquired' ELSE (CASE WHEN l.waitstart IS NULL THEN '0' ELSE EXTRACT(EPOCH FROM now() - l.waitstart)::int || ' sec' END) END AS "wait time",
+    pg_blocking_pids(l.pid) AS "blocked by pids"
+  FROM pg_locks l
+  LEFT JOIN pg_class c ON l.relation = c.oid
+  WHERE c.relnamespace::regnamespace NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  ORDER BY pid, tx;
+$$ AS locks \gset
+
+-- :locks_by_objects
+SELECT $$
+  SELECT
+    l.pid,
+    l.virtualtransaction AS tx,
+    l.mode AS "lock mode", -- https://www.postgresql.org/docs/17/explicit-locking.html#LOCKING-TABLES
+    CASE -- https://www.postgresql.org/docs/17/monitoring-stats.html#WAIT-EVENT-LOCK-TABLE
+      WHEN l.locktype IN ('relation', 'page', 'tuple') THEN ''
+      WHEN l.locktype = 'advisory' THEN 'advisory '
+      WHEN l.locktype = 'transactionid' THEN 'transaction to finish '
+      WHEN l.locktype = 'applytransaction' THEN 'remote transaction being applied by a logical replication subscriber '
+      WHEN l.locktype = 'spectoken' THEN 'speculative insertion lock '
+      WHEN l.locktype = 'frozenid' THEN 'update pg_database.datfrozenxid and pg_database.datminmxid lock '
+      WHEN l.locktype = 'extend' THEN 'extend a relation lock '
+      WHEN l.locktype = 'object' THEN 'non-relation database object lock '
+      WHEN l.locktype = 'virtualxid' THEN 'virtual transaction ID lock '
+      WHEN l.locktype = 'userlock' THEN 'user lock '
+      ELSE '??? '
+    END ||
+    CASE WHEN c.relkind IS NOT NULL THEN
+      CASE
+        WHEN c.relkind = 'r' THEN 'table'
+        WHEN c.relkind = 'i' THEN 'index'
+        WHEN c.relkind = 'S' THEN 'sequence'
+        WHEN c.relkind = 't' THEN 'TOAST table'
+        WHEN c.relkind = 'v' THEN 'view'
+        WHEN c.relkind = 'm' THEN 'materialized view'
+        WHEN c.relkind = 'c' THEN 'composite'
+        WHEN c.relkind = 'f' THEN 'foreign table'
+        WHEN c.relkind = 'p' THEN 'partitioned table'
+        WHEN c.relkind = 'I' THEN 'partitioned index'
+        ELSE '???'
+      END || ' ' || c.relnamespace::regnamespace || '.' || c.relname || ' '
+      ELSE ''
+    END ||
+    CASE WHEN l.page IS NOT NULL THEN 'page #' || l.page || ' ' ELSE '' END ||
+    CASE WHEN l.tuple IS NOT NULL THEN 'tuple ' || l.tuple || ' ' ELSE '' END ||
+    CASE WHEN l.virtualxid IS NOT NULL THEN 'virtual tx ' || l.virtualxid || ' ' ELSE '' END ||
+    CASE WHEN l.transactionid IS NOT NULL THEN 'tx ' || l.transactionid || ' ' ELSE '' END ||
+    CASE WHEN l.classid IS NOT NULL THEN 'pg_class.oid#' || l.classid || ' ' ELSE '' END ||
+    CASE WHEN l.objid IS NOT NULL THEN 'object #' || l.objid || ' ' ELSE '' END ||
+    CASE WHEN l.objsubid IS NOT NULL THEN 'column #' || l.objsubid || ' ' ELSE '' END
+    AS "lock on object",
+    CASE WHEN l.granted THEN 'acquired' ELSE (CASE WHEN l.waitstart IS NULL THEN '0' ELSE EXTRACT(EPOCH FROM now() - l.waitstart)::int || ' sec' END) END AS "wait time"
+  FROM pg_locks l
+  LEFT JOIN pg_class c ON l.relation = c.oid
+  WHERE c.relnamespace::regnamespace NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  GROUP BY l.pid, l.virtualtransaction, l.granted;
+
+$$ AS locks_by_objects \gset
+
 \set QUIET off
 
-\echo 'Functions :table_stats :table_permissions :index_stats :hard_queries :gc :problems added'
+\echo 'Functions :table_stats :table_privileges :index_stats :hard_queries :tx :gc :problems added'
