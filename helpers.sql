@@ -4,6 +4,7 @@
 --   look at n_live_tup, n_dead_tup, n_tup_hot_upd at https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW
 --   make :index_gc and :index_permissions
 --   look at https://github.com/powa-team/pg_stat_kcache/ and https://github.com/percona/pg_stat_monitor features
+
 -- :table_stats
 SELECT $$
   SELECT t.schemaname || '.' || t.relname AS table,
@@ -33,6 +34,37 @@ SELECT $$
     array_to_string(privilege, ',') AS "privileges"
   FROM (
     SELECT
+      n.nspname AS schemaname,
+      ' ' || CASE
+        WHEN a.defaclobjtype = 'r' THEN 'relations'
+        WHEN a.defaclobjtype = 'S' THEN 'sequences'
+        WHEN a.defaclobjtype = 'f' THEN 'functions'
+        WHEN a.defaclobjtype = 'T' THEN 'types'
+        WHEN a.defaclobjtype = 'n' THEN 'schemas'
+        ELSE '???'
+      END || ' DEFAULTS' AS tablename,
+      r.rolname AS role_name,
+      false AS as_owner,
+      acl.is_grantable AS grantable,
+      CASE
+        WHEN a.defaclobjtype = 'r' THEN (CASE WHEN array_agg(acl.privilege_type) @> '{"INSERT","SELECT","UPDATE","DELETE","TRUNCATE","REFERENCES","TRIGGER"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT acl.privilege_type ORDER BY acl.privilege_type) END)
+        WHEN a.defaclobjtype = 'S' THEN (CASE WHEN array_agg(acl.privilege_type) @> '{"SELECT","UPDATE","USAGE"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT acl.privilege_type ORDER BY acl.privilege_type) END)
+        WHEN a.defaclobjtype = 'f' THEN (CASE WHEN array_agg(acl.privilege_type) @> '{"EXECUTE"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT acl.privilege_type ORDER BY acl.privilege_type) END)
+        WHEN a.defaclobjtype = 'T' THEN (CASE WHEN array_agg(acl.privilege_type) @> '{"USAGE"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT acl.privilege_type ORDER BY acl.privilege_type) END)
+        WHEN a.defaclobjtype = 'n' THEN (CASE WHEN array_agg(acl.privilege_type) @> '{"CREATE","USAGE"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT acl.privilege_type ORDER BY acl.privilege_type) END)
+        ELSE array_agg(DISTINCT acl.privilege_type ORDER BY acl.privilege_type)
+      END AS privilege
+    FROM
+      pg_default_acl a,
+      aclexplode(a.defaclacl) acl,
+      pg_namespace n,
+      pg_roles r
+    WHERE
+      a.defaclnamespace = n.oid
+      AND acl.grantee = r.oid
+    GROUP BY schemaname, a.defaclobjtype, tablename, role_name, as_owner, grantable
+    UNION
+    SELECT
       t.schemaname,
       t.tablename,
       g.grantee AS role_name,
@@ -41,7 +73,7 @@ SELECT $$
       CASE WHEN array_agg(g.privilege_type) @> '{"INSERT","SELECT","UPDATE","DELETE","TRUNCATE","REFERENCES","TRIGGER"}' THEN '{"ALL"}' ELSE array_agg(DISTINCT g.privilege_type ORDER BY g.privilege_type) END AS privilege
     FROM pg_tables AS t INNER JOIN information_schema.role_table_grants AS g ON g.table_schema = t.schemaname AND g.table_name = t.tablename
     WHERE t.schemaname NOT IN ('pg_catalog','information_schema','tmp')
-    GROUP BY t.schemaname, t.tablename, t.tableowner, g.grantee, g.is_grantable = 'YES'
+    GROUP BY schemaname, tablename, role_name, as_owner, grantable
     UNION
     SELECT
       schemaname,
