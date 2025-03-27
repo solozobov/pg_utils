@@ -8,7 +8,7 @@
 -- :table_stats
 SELECT $$
   SELECT t.schemaname || '.' || t.relname AS table,
-         pg_size_pretty(pg_total_relation_size(t.relid)) AS total_size,
+         pg_size_pretty(pg_total_relation_size(t.relid)) AS "total_size ▼",
          pg_size_pretty(pg_table_size(t.relid)) AS table_size,
          pg_size_pretty(pg_indexes_size(t.relid)) AS indexes_size,
          round(b.bloat_pct::numeric) || '%' AS mvcc_garbage_rows,
@@ -129,7 +129,7 @@ SELECT $$
   SELECT
     schemaname || '.' || indexrelname || CASE WHEN r.indisvalid THEN '' ELSE ' INVALID' END || CASE WHEN r.indisready THEN '' ELSE ' DISABLED' END || CASE WHEN r.duplicate_index ISNULL THEN '' ELSE ' DUPn' || r.duplicate_index END AS index,
     -- r.indrelid::regclass AS table,
-    pg_size_pretty(index_size) AS size,
+    pg_size_pretty(index_size) AS "size ▼",
     CASE WHEN table_size = 0 THEN NULL ELSE ((index_size * 100) / table_size)::numeric || '%' END AS "%_of_table_size",
     CASE WHEN table_rows = 0 THEN NULL ELSE round(((index_rows * 100) / table_rows))::numeric || '%' END AS "row_coverage",
     CASE WHEN indisunique THEN 'Y' ELSE '' END AS unique,
@@ -165,7 +165,7 @@ $$ AS hard_queries \gset
 
 -- :tx
 SELECT $$
-  SELECT now() - xact_start AS duration, *
+  SELECT now() - xact_start AS "duration ▼", *
   FROM pg_stat_activity
   WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid()
   ORDER BY now() - xact_start DESC;
